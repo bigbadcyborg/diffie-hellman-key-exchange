@@ -1,13 +1,32 @@
 #!/usr/bin/env python3
 from html import escape
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs
 import argparse
+import base64
+import errno
+import hashlib
+import logging
+import sys
 
 from lab4_support import cipher_decryption, cipher_encryption
 
 
 ALLOWED_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+MAX_BODY_SIZE = 10 * 1024
+STYLES = """
+body { font-family: Arial, sans-serif; margin: 2rem; }
+.container { max-width: 720px; }
+label { display: block; margin-top: 1rem; font-weight: bold; }
+textarea, input[type="text"] { width: 100%; padding: 0.5rem; font-size: 1rem; }
+.actions { margin-top: 1rem; }
+.actions button { padding: 0.6rem 1.2rem; font-size: 1rem; }
+.result { margin-top: 1.5rem; padding: 1rem; background: #f7f7f7; }
+.error { margin-top: 1.5rem; padding: 1rem; background: #ffe4e4; color: #8a1f1f; }
+.note { font-size: 0.9rem; color: #555; margin-top: 0.5rem; }
+""".strip()
+STYLE_HASH = base64.b64encode(hashlib.sha256(STYLES.encode("utf-8")).digest()).decode("utf-8")
+logger = logging.getLogger(__name__)
 
 
 def normalize_message(value):
@@ -40,22 +59,12 @@ def render_page(message="", key="", action="encrypt", result="", error=""):
 <html lang="en">
   <head>
     <meta charset="utf-8">
-    <title>Message Encrypt / Decrypt</title>
-    <style>
-      body {{ font-family: Arial, sans-serif; margin: 2rem; }}
-      .container {{ max-width: 720px; }}
-      label {{ display: block; margin-top: 1rem; font-weight: bold; }}
-      textarea, input[type="text"] {{ width: 100%; padding: 0.5rem; font-size: 1rem; }}
-      .actions {{ margin-top: 1rem; }}
-      .actions button {{ padding: 0.6rem 1.2rem; font-size: 1rem; }}
-      .result {{ margin-top: 1.5rem; padding: 1rem; background: #f7f7f7; }}
-      .error {{ margin-top: 1.5rem; padding: 1rem; background: #ffe4e4; color: #8a1f1f; }}
-      .note {{ font-size: 0.9rem; color: #555; margin-top: 0.5rem; }}
-    </style>
+    <title>Message Encrypt/Decrypt</title>
+    <style>{STYLES}</style>
   </head>
   <body>
     <div class="container">
-      <h1>Encrypt / Decrypt Messages</h1>
+      <h1>Encrypt/Decrypt Messages</h1>
       <p class="note">Uses the existing Hill 2x2 cipher implementation. Messages and keys must be letters A-Z only.</p>
       <form method="post">
         <label for="message">Message</label>
@@ -77,7 +86,7 @@ def render_page(message="", key="", action="encrypt", result="", error=""):
 </html>"""
 
 
-class EncryptHandler(BaseHTTPRequestHandler):
+class EncryptDecryptHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path != "/":
             self.send_error(404, "Not Found")
@@ -88,8 +97,23 @@ class EncryptHandler(BaseHTTPRequestHandler):
         if self.path != "/":
             self.send_error(404, "Not Found")
             return
-        content_length = int(self.headers.get("Content-Length", "0"))
-        body = self.rfile.read(content_length).decode("utf-8")
+        length_header = self.headers.get("Content-Length")
+        if length_header is None:
+            self.send_error(411, "Content-Length required.")
+            return
+        try:
+            content_length = int(length_header)
+        except ValueError:
+            self.send_error(400, "Invalid Content-Length header.")
+            return
+        if content_length > MAX_BODY_SIZE:
+            self.send_error(413, "Request body too large.")
+            return
+        try:
+            body = self.rfile.read(content_length).decode("utf-8")
+        except UnicodeDecodeError:
+            self.send_error(400, "Invalid request encoding.")
+            return
         form = parse_qs(body)
 
         message = form.get("message", [""])[0]
@@ -106,9 +130,16 @@ class EncryptHandler(BaseHTTPRequestHandler):
             elif action == "decrypt":
                 result = cipher_decryption(normalized_message, normalized_key)
             else:
-                raise ValueError("Unknown action.")
+                raise ValueError("Invalid action. Must be either encrypt or decrypt.")
         except ValueError as exc:
             error = str(exc)
+        except Exception as exc:
+            logger.error(
+                "Unexpected error while processing request: %s: %s",
+                type(exc).__name__,
+                exc,
+            )
+            error = "Unexpected error occurred. Please check server logs."
 
         self._send_html(render_page(message, key, action, result, error))
 
@@ -118,20 +149,57 @@ class EncryptHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(encoded)))
         self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header(
+            "Content-Security-Policy",
+            f"default-src 'self'; style-src 'sha256-{STYLE_HASH}'; "
+            "form-action 'self'; script-src 'none'",
+        )
         self.end_headers()
         self.wfile.write(encoded)
 
 
 def main():
     parser = argparse.ArgumentParser(description="Run the encrypt/decrypt web UI.")
-    parser.add_argument("--host", default="127.0.0.1", help="Host to bind (default: 127.0.0.1)")
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host to bind (default: 127.0.0.1). Use 0.0.0.0 only behind HTTPS.",
+    )
     parser.add_argument("--port", type=int, default=8000, help="Port to listen on (default: 8000)")
     args = parser.parse_args()
 
-    server = ThreadingHTTPServer((args.host, args.port), EncryptHandler)
-    print(f"Server running on http://{args.host}:{args.port}")
-    server.serve_forever()
+    logging.basicConfig(level=logging.INFO)
+    try:
+        server = HTTPServer((args.host, args.port), EncryptDecryptHandler)
+    except OSError as exc:
+        detail = ""
+        if exc.errno == errno.EADDRINUSE:
+            detail = "Port already in use."
+        elif exc.errno == errno.EACCES:
+            detail = "Permission denied. Try a higher port."
+        detail_suffix = f" {detail}" if detail else ""
+        print(
+            f"Unable to start server on {args.host}:{args.port}: "
+            f"{type(exc).__name__}: {exc}.{detail_suffix}"
+        )
+        return 1
+
+    if args.host in {"0.0.0.0", "::"}:
+        print(
+            f"Server running on http://{args.host}:{args.port} "
+            f"(binds to all interfaces; ensure HTTPS when exposed)."
+        )
+    else:
+        print(f"Server running on http://{args.host}:{args.port}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("Server stopped.")
+    finally:
+        server.server_close()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

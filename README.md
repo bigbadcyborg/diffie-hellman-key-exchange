@@ -1,4 +1,4 @@
-# Diffie-Hellman Key Exchange Demo
+# Diffie-Hellman Key Exchange & Hill Cipher Demo
 
 This repo now includes a small web UI for encrypting and decrypting messages using the existing Hill 2x2 cipher logic.
 
@@ -21,6 +21,8 @@ Then open `http://127.0.0.1:8000` in your browser.
 - Keys must be exactly 4 letters (A-Z).
 
 ## Using a Subdomain
+
+**Security note:** This demo does not include authentication or HTTPS. Use a reverse proxy with TLS termination and access controls when exposing it on a subdomain, otherwise keys and messages will travel in plaintext.
 
 Deploy the server on a public host (or behind a reverse proxy) and point your DNS subdomain to that host. For example, bind the app to `0.0.0.0` so it can receive traffic:
 
