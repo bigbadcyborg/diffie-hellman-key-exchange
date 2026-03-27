@@ -7,6 +7,7 @@ import base64
 import errno
 import hashlib
 import logging
+import os
 import sys
 
 from lab4_support import cipher_decryption, cipher_encryption
@@ -27,6 +28,17 @@ textarea, input[type="text"] { width: 100%; padding: 0.5rem; font-size: 1rem; }
 """.strip()
 STYLE_HASH = base64.b64encode(hashlib.sha256(STYLES.encode("utf-8")).digest()).decode("utf-8")
 logger = logging.getLogger(__name__)
+
+
+def _listen_port_default():
+    for key in ("WEB_APP_PORT", "PORT"):
+        raw = os.environ.get(key)
+        if raw is not None:
+            try:
+                return int(raw)
+            except ValueError:
+                logger.warning("Ignoring invalid %s=%r", key, raw)
+    return 8000
 
 
 def normalize_message(value):
@@ -65,7 +77,7 @@ def render_page(message="", key="", action="encrypt", result="", error=""):
   <body>
     <div class="container">
       <h1>Encrypt/Decrypt Messages</h1>
-      <p class="note">Uses the existing Hill 2x2 cipher implementation. Messages and keys must be letters A-Z only.</p>
+      <p class="note">Uses the existing Hill 2x2 cipher implementation. Messages and keys must be letters A-Z only. The key matrix must be invertible modulo 26 (its determinant must be odd and not divisible by 13); otherwise encryption fails.</p>
       <form method="post">
         <label for="message">Message</label>
         <textarea id="message" name="message" rows="4" required>{message_value}</textarea>
@@ -105,6 +117,9 @@ class EncryptDecryptHandler(BaseHTTPRequestHandler):
             content_length = int(length_header)
         except ValueError:
             self.send_error(400, "Invalid Content-Length header.")
+            return
+        if content_length < 0:
+            self.send_error(400, "Invalid Content-Length.")
             return
         if content_length > MAX_BODY_SIZE:
             self.send_error(413, "Request body too large.")
@@ -163,10 +178,15 @@ def main():
     parser = argparse.ArgumentParser(description="Run the encrypt/decrypt web UI.")
     parser.add_argument(
         "--host",
-        default="127.0.0.1",
-        help="Host to bind (default: 127.0.0.1). Use 0.0.0.0 only behind HTTPS.",
+        default=os.environ.get("WEB_APP_HOST", "127.0.0.1"),
+        help="Host to bind (default: 127.0.0.1, or WEB_APP_HOST). Use 0.0.0.0 in containers.",
     )
-    parser.add_argument("--port", type=int, default=8000, help="Port to listen on (default: 8000)")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=_listen_port_default(),
+        help="Port to listen on (default: 8000, or WEB_APP_PORT / PORT).",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO)

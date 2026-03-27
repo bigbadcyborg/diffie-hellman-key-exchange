@@ -1,33 +1,58 @@
 # Diffie-Hellman Key Exchange & Hill Cipher Demo
 
-This repo now includes a small web UI for encrypting and decrypting messages using the existing Hill 2x2 cipher logic.
+This repo includes a small web UI for encrypting and decrypting messages using the Hill 2x2 cipher (`lab4_support.py`).
 
-## Run the Web UI
+## Run the Web UI (local Python)
 
-Install the Python dependency:
+Install dependencies (minimal set for the web app):
 
 ```bash
-pip install numpy
+pip install -r requirements-web.txt
 ```
+
+Start the server (default bind: `127.0.0.1`, port **8000**):
+
+```bash
+python3 web_app.py
+```
+
+Or explicitly:
 
 ```bash
 python3 web_app.py --host 127.0.0.1 --port 8000
 ```
 
-Then open `http://127.0.0.1:8000` in your browser.
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000).
+
+**Environment overrides (optional):** `WEB_APP_HOST`, `PORT`, or `WEB_APP_PORT` are read before CLI defaults; flags still win when passed.
 
 **Input rules:**
+
 - Messages must be letters A-Z only (no spaces or symbols).
-- Keys must be exactly 4 letters (A-Z).
+- Keys must be exactly four letters A-Z.
+- The key matrix must be invertible modulo 26 (determinant odd and not divisible by 13), or encryption/decryption will fail with an error.
 
-## Using a Subdomain
+## Run with Docker
 
-**Security note:** This demo does not include authentication or HTTPS. Use a reverse proxy with TLS termination and access controls when exposing it on a subdomain, otherwise keys and messages will travel in plaintext.
-
-Deploy the server on a public host (or behind a reverse proxy) and point your DNS subdomain to that host. For example, bind the app to `0.0.0.0` so it can receive traffic:
+Build and run (app listens on **8080** inside the container; host maps **8080→8080** by default):
 
 ```bash
-python3 web_app.py --host 0.0.0.0 --port 8000
+docker compose up --build
 ```
 
-Then configure your web server or hosting platform to route your subdomain (e.g. `crypto.example.com`) to that port.
+Open [http://localhost:8080](http://localhost:8080).
+
+- Change the **host** publish port: `PUBLISH_PORT=3000 docker compose up` → [http://localhost:3000](http://localhost:3000) (container still uses 8080 unless you change `PORT` in compose).
+- Bare image: `docker build -t hill-web .` then `docker run --rm -p 8080:8080 hill-web`
+
+## Subdomain deployment
+
+**Security:** This demo has no authentication. Always put **TLS** (HTTPS) and sensible access controls in front of it when exposing a subdomain. Without that, traffic is plaintext.
+
+Typical layout:
+
+1. Run the app on the server (Docker Compose or `python3 web_app.py --host 0.0.0.0 --port <port>`).
+2. Point DNS for your subdomain (e.g. `hill.example.com`) at the server.
+3. Terminate HTTPS on a reverse proxy and proxy to the app.
+
+An annotated **nginx** example is in [`deploy/subdomain.nginx.conf`](deploy/subdomain.nginx.conf) (defaults to upstream `127.0.0.1:8080` when using the provided Docker setup).

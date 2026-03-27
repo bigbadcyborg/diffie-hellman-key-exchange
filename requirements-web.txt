@@ -1,0 +1,2 @@
+# Minimal deps for web_app.py (Hill cipher via lab4_support)
+numpy>=1.26,<3

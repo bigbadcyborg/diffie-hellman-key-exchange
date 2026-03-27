@@ -1,4 +1,5 @@
 # Chat Encryption Helper - ch9_crypto_chat.py
+import math
 import os, base64, json
 #from Crypto.Cipher import PKCS1_OAEP, AES
 #from Crypto.PublicKey import RSA, ECC
@@ -32,7 +33,26 @@ def convert_char_to_number(matrix):
     
 def convert_key_to_numbers(key2d):
     return [[ord(char.upper()) - ord('A') for char in row] for row in key2d]
-    
+
+
+def _hill_key_det_mod_26(key2d_nums):
+    return (
+        key2d_nums[0][0] * key2d_nums[1][1]
+        - key2d_nums[0][1] * key2d_nums[1][0]
+    ) % 26
+
+
+def _require_invertible_hill_key(key2d_nums):
+    det_mod26 = _hill_key_det_mod_26(key2d_nums)
+    if math.gcd(det_mod26, 26) != 1:
+        raise ValueError(
+            "This Hill cipher key is not usable: the 2x2 matrix determinant is "
+            f"congruent to {det_mod26} modulo 26, but it must be coprime with 26 "
+            "(not divisible by 2 or 13). Pick a different four-letter key."
+        )
+    return det_mod26
+
+
 def cipher_decryption(cipher, key): 
   
     # Handle condition if the message length is odd. 
@@ -50,14 +70,9 @@ def cipher_decryption(cipher, key):
     key2d = convert_key_to_numbers(key2d)
     #print(key2d)
      
-    # checking validity of the key; finding determinant 
-    det = key2d[0][0] * key2d[1][1] - key2d[0][1] * key2d[1][0]
-    det_mod26 = det % 26
-    try:
-        det_inverse = mod_inverse(det_mod26,26)
-    except ValueError:
-        raise ValueError("Key matrix determinant invalid.");
-     
+    det_mod26 = _require_invertible_hill_key(key2d)
+    det_inverse = mod_inverse(det_mod26, 26)
+
     # find transpose of cofactor matrix
     # find transpose  
     # find minor 
@@ -112,16 +127,8 @@ def cipher_encryption(plain, key):
     key2d = convert_key_to_numbers(key2d)
     #print(key2d)
     
-    # checking validity of the key; finding determinant 
-    det = key2d[0][0] * key2d[1][1] - key2d[0][1] * key2d[1][0]
-    det_mod26 = det % 26
-    try:
-        tmp = mod_inverse(det_mod26,26)
-    except ValueError:
-        raise ValueError("Key matrix determinant invalid.");
-        
-    
-     
+    _require_invertible_hill_key(key2d)
+
     # finding multiplicative inverse and implementing steps to encrypt 
     #text
     encrypted_nums = []
@@ -258,16 +265,8 @@ class DiffieHellman:
         key2d = convert_key_to_numbers(key2d)
         print(key2d)
         
-        # checking validity of the key; finding determinant 
-        det = key2d[0][0] * key2d[1][1] - key2d[0][1] * key2d[1][0]
-        det_mod26 = det % 26
-        try:
-            tmp = mod_inverse(det_mod26,26)
-        except ValueError:
-            raise ValueError("Key matrix determinant invalid.");
-            
-        
-         
+        _require_invertible_hill_key(key2d)
+
         # finding multiplicative inverse and implementing steps to encrypt 
         #text
         encrypted_nums = []
@@ -303,14 +302,9 @@ class DiffieHellman:
         key2d = convert_key_to_numbers(key2d)
         print(key2d)
          
-        # checking validity of the key; finding determinant 
-        det = key2d[0][0] * key2d[1][1] - key2d[0][1] * key2d[1][0]
-        det_mod26 = det % 26
-        try:
-            det_inverse = mod_inverse(det_mod26,26)
-        except ValueError:
-            raise ValueError("Key matrix determinant invalid.");
-         
+        det_mod26 = _require_invertible_hill_key(key2d)
+        det_inverse = mod_inverse(det_mod26, 26)
+
         # find transpose of cofactor matrix
         # find transpose  
         # find minor 
